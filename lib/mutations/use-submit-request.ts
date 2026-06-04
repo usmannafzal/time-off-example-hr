@@ -24,6 +24,7 @@ import { createTempId } from "@/lib/domain/ids";
 import { countDaysInclusive } from "@/lib/hcm/serialization";
 import { VERIFICATION_DELAY_MS } from "@/lib/config";
 import { useTransitionStore } from "@/lib/store/transition-store";
+import { useToastStore } from "@/lib/store/toast-store";
 import { broadcastInvalidate } from "@/lib/sync/cross-tab-sync";
 import type { Balance, LeaveRequest } from "@/lib/domain/types";
 
@@ -185,6 +186,18 @@ export function useSubmitRequest() {
 
         // Atomic temp→real id swap (TRD §4.4). After this, no temp id remains.
         store.swapTempToReal(tempId, server);
+
+        // Confirm the submission with the reserved balance for the location the
+        // leave was applied to. `expectedAvailable` is the optimistically
+        // reserved value already reflected in the UI; verification (+3s) will
+        // reconcile it against the server if the write silently failed.
+        useToastStore
+          .getState()
+          .push(
+            "success",
+            `Time off requested — your ${input.locationName} balance is now ${serverAvailable - days} days.`,
+          );
+
         queryClient.invalidateQueries({
           queryKey: queryKeys.requests(input.employeeId),
         });

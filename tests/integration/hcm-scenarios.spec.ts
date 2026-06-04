@@ -144,7 +144,7 @@ test.describe("anniversary bonus path (TRD §8.3)", () => {
     await page.getByRole("button", { name: "Refresh all balances" }).click();
 
     await expect(
-      page.getByText(/New York balance is now/i),
+      page.getByText(/HR updated your New York balance/i),
     ).toBeVisible({ timeout: 10_000 });
   });
 });

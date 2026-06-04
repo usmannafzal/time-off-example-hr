@@ -74,7 +74,11 @@ function RefreshedMidSession() {
     // wiped). Defer to a macrotask, which runs after that flush, so the
     // reconciliation toast survives.
     const timer = setTimeout(
-      () => push("success", "Your New York balance is now 14 days."),
+      () =>
+        push(
+          "success",
+          "HR updated your New York balance — it's now 14 days.",
+        ),
       0,
     );
     return () => clearTimeout(timer);
@@ -97,7 +101,9 @@ export const BalanceRefreshedMidSession: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await waitFor(() =>
-      expect(canvas.getByText(/New York balance is now/i)).toBeInTheDocument(),
+      expect(
+        canvas.getByText(/HR updated your New York balance/i),
+      ).toBeInTheDocument(),
     );
   },
 };

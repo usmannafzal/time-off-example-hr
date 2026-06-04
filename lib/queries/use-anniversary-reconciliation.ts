@@ -32,7 +32,7 @@ export function useAnniversaryReconciliation(
       if (prior !== undefined && b.available > prior && !suppress) {
         push(
           "success",
-          `Your ${b.locationName} balance is now ${b.available} days.`,
+          `HR updated your ${b.locationName} balance — it's now ${b.available} days.`,
         );
       }
       // Only advance the baseline when not suppressed, so an increase that
