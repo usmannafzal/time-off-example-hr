@@ -31,7 +31,7 @@ import {
   getBalanceCell,
   getRequest,
   listBalances,
-  listPendingRequests,
+  listManagerQueue,
   listRequests,
   patchRequest,
   applyAnniversaryBonus,
@@ -124,10 +124,11 @@ export async function handleGetBalanceCell(
 export async function handleGetRequests(request: Request): Promise<Response> {
   const url = new URL(request.url);
   await delay("cell", url);
-  // Manager queue: ?scope=pending returns confirmed pending requests across
-  // employees (TRD §4.5). Otherwise the authenticated employee's requests.
+  // Manager queue: ?scope=pending returns the manager queue across employees —
+  // actionable pending requests followed by view-only cancelled ones (TRD §4.5).
+  // Otherwise the authenticated employee's requests.
   if (url.searchParams.get("scope") === "pending") {
-    return json({ scope: "pending", requests: listPendingRequests() });
+    return json({ scope: "pending", requests: listManagerQueue() });
   }
   const employeeId = employeeIdFrom(request, url);
   return json({ employeeId, requests: listRequests(employeeId) });
@@ -175,6 +176,16 @@ export async function handleCreateRequest(request: Request): Promise<Response> {
         },
         409,
       );
+    case "overlap":
+      return json(
+        {
+          code: "OVERLAPPING_LEAVE",
+          conflictStart: result.conflict.startDate,
+          conflictEnd: result.conflict.endDate,
+          conflictStatus: result.conflict.status,
+        },
+        409,
+      );
     case "silent-failure":
       // 200 OK that looks successful; nothing persisted (TRD §6.2).
       return json(result.request, 200);
@@ -205,6 +216,16 @@ export async function handlePatchRequest(
           code: "INSUFFICIENT_BALANCE",
           available: result.available,
           requested: result.requested,
+        },
+        409,
+      );
+    case "overlap":
+      return json(
+        {
+          code: "OVERLAPPING_LEAVE",
+          conflictStart: result.conflict.startDate,
+          conflictEnd: result.conflict.endDate,
+          conflictStatus: result.conflict.status,
         },
         409,
       );

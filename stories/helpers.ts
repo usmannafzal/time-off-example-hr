@@ -120,9 +120,13 @@ export const mswRequestsOk = (requests: LeaveRequestDto[]) =>
   http.get("*/api/hcm/requests", ({ request }) => {
     const scope = new URL(request.url).searchParams.get("scope");
     if (scope === "pending") {
+      // Manager queue: pending (actionable) first, then cancelled (view-only).
       return HttpResponse.json({
         scope: "pending",
-        requests: requests.filter((r) => r.status === "pending"),
+        requests: [
+          ...requests.filter((r) => r.status === "pending"),
+          ...requests.filter((r) => r.status === "cancelled"),
+        ],
       });
     }
     return HttpResponse.json({ employeeId: EMP, requests });

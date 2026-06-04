@@ -15,9 +15,32 @@ import {
   Notice,
   formatDate,
 } from "@/components/ui/primitives";
+import { STATUS_PRESENTATION } from "@/lib/domain/status-presentation";
+import { isManagerActionable } from "@/lib/domain/state-machine";
 import { FreshBalanceDisplay } from "./fresh-balance-display";
 import { ApprovalControls } from "./approval-controls";
 import { StaleBalanceOverrideWarning } from "./stale-balance-override-warning";
+
+/** Header shown by every manager card (employee, location, dates, status). */
+function ManagerCardHeader({ request }: { request: LeaveRequest }) {
+  const presentation = STATUS_PRESENTATION[request.status];
+  return (
+    <div className="flex items-start justify-between gap-2">
+      <div>
+        <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
+          {request.employeeId} · {request.locationName}
+        </h3>
+        <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
+          {formatDate(request.startDate)} – {formatDate(request.endDate)}
+          <span className="ml-2 text-xs text-slate-400">
+            {request.days} {request.days === 1 ? "day" : "days"}
+          </span>
+        </p>
+      </div>
+      <Badge tone={presentation.tone}>{presentation.label}</Badge>
+    </div>
+  );
+}
 
 /**
  * Manager queue card (TRD §5.4, §4.5). Opening "Review" triggers a fresh
@@ -44,7 +67,14 @@ export function ManagerRequestCard({
   const approve = useApproveRequest();
   const deny = useDenyRequest();
 
-  const freshConfirmed = open && cell.isSuccess && !!cell.data;
+  const freshLoaded = open && cell.isSuccess && !!cell.data;
+  // The cell can back this request with its own reservation (`pending`) plus any
+  // remaining `available`. If that is less than the requested days, approval
+  // would exceed the granted balance and is blocked (TRD §4.5).
+  const sufficient = cell.data
+    ? cell.data.available + cell.data.pending >= request.days
+    : false;
+  const freshConfirmed = freshLoaded && sufficient;
   const fetchFailed = open && cell.isError;
   const canApprove = freshConfirmed || (fetchFailed && overridden);
   const busy = approve.isPending || deny.isPending;
@@ -52,22 +82,22 @@ export function ManagerRequestCard({
   const conflict =
     approve.error instanceof HcmError && approve.error.status === 409;
 
+  // View-only requests (e.g. cancelled): shown so a cancellation is not a
+  // surprise to the manager, but no action can be taken (TRD §4.5).
+  if (!isManagerActionable(request)) {
+    return (
+      <Card className="opacity-90">
+        <ManagerCardHeader request={request} />
+        <p className="mt-3 text-sm text-slate-500 dark:text-slate-400">
+          {STATUS_PRESENTATION[request.status].description} No action needed.
+        </p>
+      </Card>
+    );
+  }
+
   return (
     <Card>
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-100">
-            {request.employeeId} · {request.locationName}
-          </h3>
-          <p className="mt-0.5 text-sm text-slate-600 dark:text-slate-300">
-            {formatDate(request.startDate)} – {formatDate(request.endDate)}
-            <span className="ml-2 text-xs text-slate-400">
-              {request.days} {request.days === 1 ? "day" : "days"}
-            </span>
-          </p>
-        </div>
-        <Badge tone="amber">Pending Approval</Badge>
-      </div>
+      <ManagerCardHeader request={request} />
 
       {!open ? (
         <div className="mt-3">
@@ -88,6 +118,14 @@ export function ManagerRequestCard({
               overridden={overridden}
               onOverrideChange={setOverridden}
             />
+          )}
+
+          {freshLoaded && !sufficient && (
+            <Notice tone="error">
+              Insufficient remaining balance to approve {request.days}{" "}
+              {request.days === 1 ? "day" : "days"}. The employee no longer has
+              enough balance — deny this request or ask them to revise it.
+            </Notice>
           )}
 
           {conflict && (

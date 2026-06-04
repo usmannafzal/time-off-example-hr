@@ -2,12 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useBalances } from "@/lib/queries/balances";
+import { useRequests } from "@/lib/queries/requests";
 import { useSubmitRequest } from "@/lib/mutations/use-submit-request";
 import { useModifyRequest } from "@/lib/mutations/use-request-actions";
 import { HcmError } from "@/lib/api/client";
 import { countDaysInclusive } from "@/lib/hcm/serialization";
+import { OCCUPYING_STATUSES, rangesOverlap } from "@/lib/domain/overlap";
 import type { Balance, LeaveRequest } from "@/lib/domain/types";
-import { Button, Card, Notice } from "@/components/ui/primitives";
+import { Button, Card, Notice, formatDate } from "@/components/ui/primitives";
 import { LocationSelector } from "./location-selector";
 import { DateRangePicker } from "./date-range-picker";
 import { BalanceSnapshot } from "./balance-snapshot";
@@ -38,6 +40,7 @@ export function NewRequestForm({
   onDone?: () => void;
 }) {
   const { data: liveBalances } = useBalances(employeeId);
+  const { data: existingRequests } = useRequests(employeeId);
   const submit = useSubmitRequest();
   const modify = useModifyRequest();
   const isEdit = !!editRequest;
@@ -83,8 +86,23 @@ export function NewRequestForm({
     startDate !== null && endDate !== null && endDate >= startDate;
   const pending = submit.isPending || modify.isPending;
 
+  // Inline guard: block dates that overlap another active request before the
+  // user submits (TRD §3.3). The server enforces this too; this is just fast
+  // feedback. Editing a request never conflicts with itself.
+  const overlapping = useMemo(() => {
+    if (!datesValid || !startDate || !endDate || !existingRequests) return null;
+    return (
+      existingRequests.find(
+        (r) =>
+          r.id !== editRequest?.id &&
+          OCCUPYING_STATUSES.has(r.status) &&
+          rangesOverlap(startDate, endDate, r.startDate, r.endDate),
+      ) ?? null
+    );
+  }, [datesValid, startDate, endDate, existingRequests, editRequest?.id]);
+
   async function handleSubmit() {
-    if (!locationId || !startDate || !endDate || !datesValid) return;
+    if (!locationId || !startDate || !endDate || !datesValid || overlapping) return;
     setRejection(null);
     const name = snapshot?.locationName ?? live?.locationName ?? locationId;
     try {
@@ -164,12 +182,20 @@ export function NewRequestForm({
         <Notice tone="warning">End date must be on or after the start date.</Notice>
       )}
 
+      {overlapping && (
+        <Notice tone="error">
+          These dates overlap an existing {overlapping.locationName} request (
+          {formatDate(overlapping.startDate)} – {formatDate(overlapping.endDate)}
+          ). Pick dates that don&apos;t conflict with your other leave.
+        </Notice>
+      )}
+
       {rejection && <RejectionNotice error={rejection} />}
 
       <div>
         <Button
           onClick={handleSubmit}
-          disabled={!datesValid || !locationId || pending}
+          disabled={!datesValid || !locationId || pending || !!overlapping}
         >
           {pending
             ? "Submitting…"
@@ -197,6 +223,16 @@ function RejectionNotice({ error }: { error: HcmError }) {
       <Notice tone="error">
         That location isn&apos;t valid for your account. Choose a different
         location.
+      </Notice>
+    );
+  }
+  if (body && body.code === "OVERLAPPING_LEAVE" && "conflictStart" in body) {
+    return (
+      <Notice tone="error">
+        These dates overlap an existing request (
+        {formatDate(new Date(body.conflictStart))} –{" "}
+        {formatDate(new Date(body.conflictEnd))}). Pick dates that don&apos;t
+        conflict with your other leave.
       </Notice>
     );
   }

@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { GC_TIME_MS, STALE_TIME_MS } from "@/lib/config";
+import { useCrossTabSync } from "@/lib/sync/cross-tab-sync";
 
 /**
  * Builds the app-wide TanStack Query client with the cache policy mandated by
@@ -33,6 +34,9 @@ function makeQueryClient(): QueryClient {
 export function Providers({ children }: { children: ReactNode }) {
   // One client per browser session; never recreate on re-render.
   const [queryClient] = useState(makeQueryClient);
+
+  // Keep this tab's cache in sync with writes made in other tabs.
+  useCrossTabSync(queryClient);
 
   return (
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>

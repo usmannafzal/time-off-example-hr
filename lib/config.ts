@@ -31,6 +31,18 @@ export const BALANCE_REFETCH_INTERVAL_MS = readNumberEnv(
 );
 
 /**
+ * Background poll cadence for the manager approval queue (TRD §4.1). Cross-tab
+ * `BroadcastChannel` sync makes writes appear instantly when tabs are in the
+ * same browser; this poll is the fallback that keeps the queue fresh when a
+ * write originates outside this browser (e.g. another device) or a broadcast
+ * is missed. Defaults to 20s.
+ */
+export const MANAGER_QUEUE_REFETCH_INTERVAL_MS = readNumberEnv(
+  process.env.NEXT_PUBLIC_MANAGER_QUEUE_REFETCH_INTERVAL_MS,
+  20 * 1000,
+);
+
+/**
  * A balance older than this is surfaced with an "as of [timestamp]" staleness
  * warning to the user (TRD §4.1 staleness indicator: 5 minutes). This is the
  * *display* threshold and is intentionally distinct from {@link STALE_TIME_MS},

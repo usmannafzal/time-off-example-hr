@@ -30,6 +30,7 @@ import type {
   PatchRequestPayload,
 } from "@/lib/hcm/contracts";
 import { HCM_ANNIVERSARY_BONUS_DAYS } from "@/lib/config";
+import { OCCUPYING_STATUSES, rangesOverlap } from "@/lib/domain/overlap";
 
 interface StoreState {
   /** key: `${employeeId}:${locationId}` */
@@ -57,6 +58,24 @@ export function resetStore(now: Date = new Date()): void {
   }
   for (const r of seedRequests()) {
     store.requests.set(r.id, structuredCloneSafe(r));
+  }
+  reconcileSeededReservations();
+}
+
+/**
+ * Make seed balances internally consistent with the seeded requests. Seed
+ * `available` is defined as already net of reservations, but the seed file does
+ * not populate the matching `pending` counter. Without this, cancelling or
+ * editing a seeded pending request would release days that were never reflected
+ * in `pending`, driving it negative and failing the non-negative balance schema
+ * on the next read. Approved/denied/cancelled seed rows need no adjustment:
+ * approved days live in `used` and the rest hold no reservation.
+ */
+function reconcileSeededReservations(): void {
+  for (const req of store.requests.values()) {
+    if (req.status !== "pending") continue;
+    const cell = ensureCell(req.employeeId, req.locationId);
+    cell.pending += req.days;
   }
 }
 
@@ -169,9 +188,49 @@ export function listPendingRequests(): LeaveRequestDto[] {
     .map(structuredCloneSafe);
 }
 
+/**
+ * The manager queue: actionable pending requests followed by cancelled ones
+ * (view-only). Cancelled requests are surfaced so a cancellation is not a
+ * surprise to the manager; they are ordered after all pending requests.
+ */
+export function listManagerQueue(): LeaveRequestDto[] {
+  const all = [...store.requests.values()];
+  const pending = all
+    .filter((r) => r.status === "pending")
+    .map(structuredCloneSafe);
+  const cancelled = all
+    .filter((r) => r.status === "cancelled")
+    .map(structuredCloneSafe);
+  return [...pending, ...cancelled];
+}
+
 export function getRequest(id: string): LeaveRequestDto | undefined {
   const r = store.requests.get(id);
   return r ? structuredCloneSafe(r) : undefined;
+}
+
+/**
+ * Find an existing active request for the employee whose dates overlap the given
+ * range, regardless of location (you can't be on leave twice on the same day).
+ * `excludeId` skips the request being edited (TRD §3.3 conflicting leaves).
+ */
+function findOverlappingRequest(
+  employeeId: string,
+  startDate: string,
+  endDate: string,
+  excludeId?: string,
+): LeaveRequestDto | undefined {
+  const start = new Date(startDate);
+  const end = new Date(endDate);
+  for (const r of store.requests.values()) {
+    if (r.employeeId !== employeeId) continue;
+    if (r.id === excludeId) continue;
+    if (!OCCUPYING_STATUSES.has(r.status)) continue;
+    if (rangesOverlap(start, end, new Date(r.startDate), new Date(r.endDate))) {
+      return r;
+    }
+  }
+  return undefined;
 }
 
 /* --------------------------------------------------------------------- *
@@ -217,11 +276,38 @@ function release(employeeId: string, locationId: string, days: number): void {
   cell.fetchedAt = new Date().toISOString();
 }
 
-function consume(employeeId: string, locationId: string, days: number): void {
+/**
+ * Commit days to `used` on approval. Days are drawn from the request's existing
+ * reservation (`pending`) first, then from `available` for any shortfall. The
+ * caller guards `days <= available + pending`, so neither counter goes negative
+ * — this keeps approval authoritative against the live balance even if a
+ * request's reservation drifted (TRD §4.5 "balance at decision time").
+ */
+function commit(employeeId: string, locationId: string, days: number): void {
   const cell = ensureCell(employeeId, locationId);
-  cell.pending -= days;
+  const fromPending = Math.min(Math.max(cell.pending, 0), days);
+  cell.pending -= fromPending;
+  cell.available -= days - fromPending;
   cell.used += days;
   cell.fetchedAt = new Date().toISOString();
+}
+
+/** Reverse a {@link commit}: an approved request is cancelled/edited (TRD §3.3). */
+function unconsume(employeeId: string, locationId: string, days: number): void {
+  const cell = ensureCell(employeeId, locationId);
+  cell.used -= days;
+  cell.available += days;
+  cell.fetchedAt = new Date().toISOString();
+}
+
+/** Return a request's currently-reserved days to `available`, from the bucket
+ *  that holds them: pending requests sit in `pending`, approved in `used`. */
+function unreserveCurrent(req: LeaveRequestDto): void {
+  if (req.status === "pending") {
+    release(req.employeeId, req.locationId, req.days);
+  } else if (req.status === "approved") {
+    unconsume(req.employeeId, req.locationId, req.days);
+  }
 }
 
 function pushAudit(
@@ -249,6 +335,7 @@ export type CreateResult =
   // 200 OK, looks successful, but nothing was persisted (TRD §6.2 silent failure).
   | { kind: "silent-failure"; request: LeaveRequestDto }
   | { kind: "conflict"; available: number; requested: number }
+  | { kind: "overlap"; conflict: LeaveRequestDto }
   | { kind: "invalid-dimension" };
 
 /**
@@ -264,6 +351,16 @@ export function createRequest(
 
   if (options.forceInvalidDimension || !isValidDimension(employeeId, locationId)) {
     return { kind: "invalid-dimension" };
+  }
+
+  // Reject dates that overlap an existing active request (TRD §3.3).
+  const overlap = findOverlappingRequest(
+    employeeId,
+    payload.startDate,
+    payload.endDate,
+  );
+  if (overlap) {
+    return { kind: "overlap", conflict: structuredCloneSafe(overlap) };
   }
 
   const cell = getBalanceCell(employeeId, locationId);
@@ -305,6 +402,7 @@ export type PatchResult =
   | { kind: "updated"; request: LeaveRequestDto }
   | { kind: "silent-failure"; request: LeaveRequestDto }
   | { kind: "conflict"; available: number; requested: number }
+  | { kind: "overlap"; conflict: LeaveRequestDto }
   | { kind: "not-found" };
 
 /** Update an existing request: edit dates (re-approval) or cancel (TRD §3.3, §6.1). */
@@ -316,36 +414,47 @@ export function patchRequest(
   const req = store.requests.get(id);
   if (!req) return { kind: "not-found" };
 
-  // Cancellation path.
+  // Cancellation path: return the reservation from its current bucket.
   if (payload.status === "cancelled") {
-    if (req.status === "pending" || req.status === "approved") {
-      release(req.employeeId, req.locationId, req.days);
-    }
+    unreserveCurrent(req);
     pushAudit(req, "Cancelled by employee", "cancelled");
     req.status = "cancelled";
     req.updatedAt = new Date().toISOString();
     return { kind: "updated", request: structuredCloneSafe(req) };
   }
 
-  // Date-edit path → recompute reservation and reset to pending (re-approval).
+  // Date-edit path → reset to pending (re-approval). Returning this request's
+  // current reservation frees `req.days` back to available, so the ceiling for
+  // the new request is `available + req.days`.
   const newDays = payload.days ?? req.days;
-  const delta = newDays - req.days;
-  if (delta > 0) {
-    const cell = getBalanceCell(req.employeeId, req.locationId);
-    const available = cell.kind === "ok" ? cell.balance.available : 0;
-    if (options.forceConflict || delta > available) {
-      return { kind: "conflict", available, requested: newDays };
-    }
+
+  // Reject edits whose new dates overlap a *different* active request (TRD §3.3).
+  const editStart = payload.startDate ?? req.startDate;
+  const editEnd = payload.endDate ?? req.endDate;
+  const overlap = findOverlappingRequest(
+    req.employeeId,
+    editStart,
+    editEnd,
+    req.id,
+  );
+  if (overlap) {
+    return { kind: "overlap", conflict: structuredCloneSafe(overlap) };
+  }
+
+  const cell = getBalanceCell(req.employeeId, req.locationId);
+  const availableNow = cell.kind === "ok" ? cell.balance.available : 0;
+  const availableIfReturned = availableNow + req.days;
+  if (options.forceConflict || newDays > availableIfReturned) {
+    return { kind: "conflict", available: availableIfReturned, requested: newDays };
   }
 
   if (shouldSilentlyFail(options)) {
     return { kind: "silent-failure", request: structuredCloneSafe(req) };
   }
 
-  if (delta !== 0) {
-    if (delta > 0) reserve(req.employeeId, req.locationId, delta);
-    else release(req.employeeId, req.locationId, -delta);
-  }
+  // Return the old reservation, then re-reserve the new amount as pending.
+  unreserveCurrent(req);
+  reserve(req.employeeId, req.locationId, newDays);
   if (payload.startDate) req.startDate = payload.startDate;
   if (payload.endDate) req.endDate = payload.endDate;
   req.days = newDays;
@@ -374,14 +483,18 @@ export function approveRequest(
 
   const cell = getBalanceCell(req.employeeId, req.locationId);
   const available = cell.kind === "ok" ? cell.balance.available : 0;
+  const pending = cell.kind === "ok" ? cell.balance.pending : 0;
 
-  // The days are already reserved (available net of pending), so a healthy
-  // approval needs available >= 0. A forced conflict models a concurrent change.
-  if (options.forceConflict || available < 0) {
+  // Authoritatively check the live balance at approval time (TRD §4.5). The
+  // employee can only be granted what the cell can back right now: the request's
+  // own reservation (`pending`) plus any remaining `available`. This prevents
+  // approving more than the granted balance even when two requests are reviewed
+  // concurrently — approving the first reduces the pool the second sees here.
+  if (options.forceConflict || req.days > available + pending) {
     return { kind: "conflict", available, requested: req.days };
   }
 
-  consume(req.employeeId, req.locationId, req.days);
+  commit(req.employeeId, req.locationId, req.days);
   pushAudit(req, `Approved by ${by}`, "approved", by);
   req.status = "approved";
   req.approvedBy = by;

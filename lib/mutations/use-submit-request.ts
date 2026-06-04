@@ -24,6 +24,7 @@ import { createTempId } from "@/lib/domain/ids";
 import { countDaysInclusive } from "@/lib/hcm/serialization";
 import { VERIFICATION_DELAY_MS } from "@/lib/config";
 import { useTransitionStore } from "@/lib/store/transition-store";
+import { broadcastInvalidate } from "@/lib/sync/cross-tab-sync";
 import type { Balance, LeaveRequest } from "@/lib/domain/types";
 
 export interface SubmitRequestInput {
@@ -84,6 +85,12 @@ export async function verifyEntry(
     store.clearDelta(entry.employeeId, entry.locationId);
     queryClient.invalidateQueries({ queryKey: queryKeys.balances(entry.employeeId) });
     queryClient.invalidateQueries({ queryKey: queryKeys.requests(entry.employeeId) });
+    queryClient.invalidateQueries({ queryKey: queryKeys.managerQueue() });
+    broadcastInvalidate(
+      queryKeys.balances(entry.employeeId),
+      queryKeys.requests(entry.employeeId),
+      queryKeys.managerQueue(),
+    );
     return "confirmed";
   }
 
@@ -172,6 +179,14 @@ export function useSubmitRequest() {
         queryClient.invalidateQueries({
           queryKey: queryKeys.requests(input.employeeId),
         });
+        // The request is now a real pending row → it belongs in the manager
+        // queue. Invalidate locally and in other tabs so an open manager view
+        // shows it without a manual refresh (TRD §4.1 multi-tab).
+        queryClient.invalidateQueries({ queryKey: queryKeys.managerQueue() });
+        broadcastInvalidate(
+          queryKeys.requests(input.employeeId),
+          queryKeys.managerQueue(),
+        );
 
         // Schedule the post-write verification read (TRD §4.3).
         if (VERIFICATION_DELAY_MS > 0) {

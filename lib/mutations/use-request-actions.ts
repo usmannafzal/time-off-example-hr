@@ -20,6 +20,7 @@ import {
 } from "@/lib/api/client";
 import { queryKeys } from "@/lib/queries/keys";
 import { countDaysInclusive } from "@/lib/hcm/serialization";
+import { broadcastInvalidate } from "@/lib/sync/cross-tab-sync";
 
 function invalidateAfterWrite(
   queryClient: QueryClient,
@@ -35,6 +36,16 @@ function invalidateAfterWrite(
   queryClient.invalidateQueries({ queryKey: queryKeys.balances(employeeId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.requests(employeeId) });
   queryClient.invalidateQueries({ queryKey: queryKeys.managerQueue() });
+
+  // Mirror the same invalidation into other open tabs (TRD §4.1 multi-tab):
+  // e.g. cancel/modify in the employee tab updates an open manager queue, and
+  // approve/deny in the manager tab updates an open employee request list.
+  broadcastInvalidate(
+    ...(locationId ? [queryKeys.balanceCell(employeeId, locationId)] : []),
+    queryKeys.balances(employeeId),
+    queryKeys.requests(employeeId),
+    queryKeys.managerQueue(),
+  );
 }
 
 export interface ModifyRequestInput {

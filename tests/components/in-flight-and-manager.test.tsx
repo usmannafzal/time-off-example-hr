@@ -103,6 +103,10 @@ function pendingRequest(): LeaveRequest {
   };
 }
 
+function cancelledRequest(): LeaveRequest {
+  return { ...pendingRequest(), id: "req_cancelled_1", status: "cancelled" };
+}
+
 describe("manager balance-at-decision-time (TRD §4.5, §8.2)", () => {
   it("Approve is disabled until a fresh balance is confirmed", async () => {
     const queryClient = makeClient();
@@ -123,6 +127,61 @@ describe("manager balance-at-decision-time (TRD §4.5, §8.2)", () => {
       const approve = screen.getByRole("button", { name: "Approve" });
       expect(approve).toBeEnabled();
     });
+  });
+
+  it("blocks approval when the fresh balance can't cover the request", async () => {
+    // Fresh balance shows only 2 days backable (available + pending) for a
+    // 10-day request → approval must stay disabled with an insufficient notice.
+    server.use(
+      http.get("*/api/hcm/balance/:locationId", () =>
+        HttpResponse.json({
+          employeeId: EMP,
+          locationId: "LOC-NYC",
+          locationName: "New York",
+          available: 2,
+          used: 0,
+          pending: 0,
+          fetchedAt: new Date().toISOString(),
+        }),
+      ),
+    );
+    const queryClient = makeClient();
+    const Wrapper = wrapperFor(queryClient);
+    const bigRequest: LeaveRequest = { ...pendingRequest(), days: 10 };
+
+    render(
+      <Wrapper>
+        <ManagerRequestCard request={bigRequest} managerName="Dana" />
+      </Wrapper>,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Review" }));
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/Insufficient remaining balance to approve/i),
+      ).toBeInTheDocument(),
+    );
+    expect(screen.getByRole("button", { name: "Approve" })).toBeDisabled();
+  });
+
+  it("renders a cancelled request as view-only (no manager actions)", async () => {
+    const queryClient = makeClient();
+    const Wrapper = wrapperFor(queryClient);
+
+    render(
+      <Wrapper>
+        <ManagerRequestCard request={cancelledRequest()} managerName="Dana" />
+      </Wrapper>,
+    );
+
+    // A cancelled card shows its status and an explicit "no action" note...
+    expect(screen.getByText("Cancelled")).toBeInTheDocument();
+    expect(screen.getByText(/No action needed/i)).toBeInTheDocument();
+    // ...and exposes none of the actionable controls.
+    expect(screen.queryByRole("button", { name: "Review" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Approve" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Deny" })).toBeNull();
   });
 
   it("on a failed fresh fetch, Approve stays disabled until the warning is overridden", async () => {

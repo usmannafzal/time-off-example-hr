@@ -130,6 +130,13 @@ export const invalidDimensionErrorSchema = z.object({
   locationId: z.string(),
 });
 
+export const overlappingLeaveErrorSchema = z.object({
+  code: z.literal("OVERLAPPING_LEAVE"),
+  conflictStart: z.string(),
+  conflictEnd: z.string(),
+  conflictStatus: z.string(),
+});
+
 export const genericErrorSchema = z.object({
   code: z.string(),
   message: z.string().optional(),
@@ -138,4 +145,5 @@ export const genericErrorSchema = z.object({
 export type HcmErrorBody =
   | z.infer<typeof insufficientBalanceErrorSchema>
   | z.infer<typeof invalidDimensionErrorSchema>
+  | z.infer<typeof overlappingLeaveErrorSchema>
   | z.infer<typeof genericErrorSchema>;

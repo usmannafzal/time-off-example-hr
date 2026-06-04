@@ -15,6 +15,7 @@ import { fetchPendingRequests, fetchRequest, fetchRequests } from "@/lib/api/cli
 import { queryKeys } from "./keys";
 import type { LeaveRequest } from "@/lib/domain/types";
 import { useTransitionStore } from "@/lib/store/transition-store";
+import { MANAGER_QUEUE_REFETCH_INTERVAL_MS } from "@/lib/config";
 
 function mergeOverlay(
   serverRequests: LeaveRequest[],
@@ -48,6 +49,13 @@ export function useManagerRequests() {
   return useQuery({
     queryKey: queryKeys.managerQueue(),
     queryFn: fetchPendingRequests,
+    // The approval queue must reflect the latest submissions/cancellations.
+    // staleTime 0 lets refocusing the tab refetch immediately, and the poll is
+    // the fallback for writes that did not arrive via the cross-tab channel
+    // (TRD §4.1 layered reconciliation).
+    staleTime: 0,
+    refetchInterval: MANAGER_QUEUE_REFETCH_INTERVAL_MS,
+    refetchIntervalInBackground: true,
   });
 }
 
