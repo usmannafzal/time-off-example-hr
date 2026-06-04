@@ -35,6 +35,7 @@ import {
   listRequests,
   patchRequest,
   applyAnniversaryBonus,
+  resetStore,
   type WriteOptions,
 } from "./store";
 
@@ -281,6 +282,19 @@ export async function handleDenyRequest(
     return json({ code: "NOT_FOUND", message: "Request not found" }, 404);
   }
   return json(result.request, 200);
+}
+
+/**
+ * Test-only: reset the in-memory store to its seeded snapshot (TRD §6.3). This
+ * gives integration tests deterministic isolation against a long-lived dev
+ * server. Disabled in production so it can never wipe real-looking state.
+ */
+export async function handleReset(): Promise<Response> {
+  if (process.env.NODE_ENV === "production") {
+    return json({ code: "FORBIDDEN", message: "Reset is not available" }, 403);
+  }
+  resetStore();
+  return json({ ok: true }, 200);
 }
 
 export async function handleAnniversary(request: Request): Promise<Response> {

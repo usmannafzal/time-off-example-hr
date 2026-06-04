@@ -6,6 +6,12 @@ import { test, expect } from "@playwright/test";
  * failures and the anniversary scheduler so these flows are deterministic.
  */
 
+// Reset the mock HCM store before each test so a reused dev server starts from
+// the seeded snapshot every time (TRD §6.3).
+test.beforeEach(async ({ request }) => {
+  await request.post("/api/hcm/admin/reset");
+});
+
 test.describe("employee leave request", () => {
   test("submit a request → confirmed pending card appears", async ({ page }) => {
     await page.goto("/dashboard");
@@ -17,12 +23,9 @@ test.describe("employee leave request", () => {
     await page.getByLabel("Start date").fill("2025-09-01");
     await page.getByLabel("End date").fill("2025-09-02");
 
-    const before = await page
-      .getByRole("button", { name: "Submit request" })
-      .isEnabled();
-    expect(before).toBe(true);
-
-    await page.getByRole("button", { name: "Submit request" }).click();
+    const submit = page.getByRole("button", { name: "Submit request" });
+    await expect(submit).toBeEnabled();
+    await submit.click();
 
     // The request list gains a Pending Approval card (post-confirmation).
     await expect(

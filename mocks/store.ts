@@ -44,15 +44,30 @@ interface StoreState {
 const cellKey = (employeeId: string, locationId: string) =>
   `${employeeId}:${locationId}`;
 
-let store: StoreState = createEmpty();
+declare global {
+  var __hcmStore: StoreState | undefined;
+}
+
+// Pin the store to `globalThis` so every consumer shares ONE instance. Next.js
+// dev (HMR) and per-route bundling can otherwise hand different route handlers
+// their own module copy, which splits the in-memory state and makes cross-route
+// reads (and resets) inconsistent. Binding the object once here — and only ever
+// mutating it in place (see resetStore) — guarantees a single source of truth.
+const store: StoreState = (globalThis.__hcmStore ??= createEmpty());
 
 function createEmpty(): StoreState {
   return { balances: new Map(), requests: new Map(), seq: 0 };
 }
 
-/** Reset to the seed snapshot. Call between test runs (TRD §6.3). */
+/**
+ * Reset to the seed snapshot. Call between test runs (TRD §6.3). Mutates the
+ * shared store object in place (rather than reassigning) so any module instance
+ * that captured the reference still observes the reset.
+ */
 export function resetStore(now: Date = new Date()): void {
-  store = createEmpty();
+  store.balances.clear();
+  store.requests.clear();
+  store.seq = 0;
   for (const b of seedBalances(now)) {
     store.balances.set(cellKey(b.employeeId, b.locationId), { ...b });
   }
@@ -83,8 +98,12 @@ function structuredCloneSafe<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
-// Seed eagerly on first import so the running app and Storybook have data.
-resetStore();
+// Seed eagerly on first import so the running app and Storybook have data, but
+// only when the shared store is still empty — a module re-eval (HMR) must not
+// wipe live state. Tests call resetStore() explicitly for isolation.
+if (store.balances.size === 0 && store.requests.size === 0) {
+  resetStore();
+}
 
 /* --------------------------------------------------------------------- *
  * IDs, randomness and "force" controls                                  *
