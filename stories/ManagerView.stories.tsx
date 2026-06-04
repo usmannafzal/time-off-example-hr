@@ -37,6 +37,13 @@ export const QueueEmpty: Story = {
 export const QueueLoading: Story = {
   parameters: { role: "manager", msw: { handlers: [mswManagerQueueLoading()] } },
   render: () => <PendingRequestQueue managerName="Dana Manager" />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(canvas.getByText("Pending approvals")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(canvas.getAllByTestId("skeleton").length).toBeGreaterThan(0),
+    );
+  },
 };
 
 export const RequestDetailBalanceLoading: Story = {

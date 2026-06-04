@@ -119,6 +119,7 @@ export function Spinner({ className }: { className?: string }) {
 export function Skeleton({ className }: { className?: string }) {
   return (
     <div
+      data-testid="skeleton"
       className={cx(
         "animate-pulse rounded-md bg-slate-200 dark:bg-slate-700",
         className,

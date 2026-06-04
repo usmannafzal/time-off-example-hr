@@ -78,7 +78,11 @@ export const HcmRejectedInsufficient: Story = {
     const end = canvas.getByLabelText("End date");
     fireEvent.change(start, { target: { value: "2025-09-01" } });
     fireEvent.change(end, { target: { value: "2025-09-03" } });
-    await userEvent.click(canvas.getByRole("button", { name: /submit request/i }));
+    const submitBtn = canvas.getByRole("button", { name: /submit request/i });
+    // The button enables a render tick after the dates change; clicking a
+    // still-disabled button silently no-ops, so wait for it first.
+    await waitFor(() => expect(submitBtn).toBeEnabled());
+    await userEvent.click(submitBtn);
     await waitFor(() =>
       expect(canvas.getByText(/insufficient balance/i)).toBeInTheDocument(),
     );
@@ -94,7 +98,9 @@ export const HcmRejectedInvalidDimension: Story = {
     const end = canvas.getByLabelText("End date");
     fireEvent.change(start, { target: { value: "2025-09-01" } });
     fireEvent.change(end, { target: { value: "2025-09-03" } });
-    await userEvent.click(canvas.getByRole("button", { name: /submit request/i }));
+    const submitBtn = canvas.getByRole("button", { name: /submit request/i });
+    await waitFor(() => expect(submitBtn).toBeEnabled());
+    await userEvent.click(submitBtn);
     await waitFor(() =>
       expect(canvas.getByText(/isn’t valid for your account|isn't valid for your account/i)).toBeInTheDocument(),
     );
@@ -107,6 +113,13 @@ export const StaleBalanceWarningMidForm: Story = {
       <StaleBalanceWarning snapshotAvailable={10} liveAvailable={5} />
     </div>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(
+      canvas.getByText(/available balance may have changed/i),
+    ).toBeInTheDocument();
+    expect(canvas.getByText(/current balance: 5 days/i)).toBeInTheDocument();
+  },
 };
 
 export const AnniversaryBonusMidForm: Story = {
@@ -115,4 +128,10 @@ export const AnniversaryBonusMidForm: Story = {
       <StaleBalanceWarning snapshotAvailable={10} liveAvailable={14} />
     </div>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    expect(
+      canvas.getByText(/balance increased to 14 days/i),
+    ).toBeInTheDocument();
+  },
 };

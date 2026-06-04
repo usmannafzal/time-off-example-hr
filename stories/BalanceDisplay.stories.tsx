@@ -24,6 +24,13 @@ type Story = StoryObj<typeof BalanceSummaryPanel>;
 
 export const Loading: Story = {
   parameters: { msw: { handlers: [mswBalancesLoading()] } },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() =>
+      expect(canvas.getAllByTestId("skeleton").length).toBeGreaterThan(0),
+    );
+    expect(canvas.queryByText("New York")).not.toBeInTheDocument();
+  },
 };
 
 export const Empty: Story = {
@@ -50,8 +57,10 @@ export const Stale: Story = {
   parameters: { msw: { handlers: [mswBalancesOk(staleBalances)] } },
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
+    // The banner copy ("N balances may be out of date") is unique; per-card
+    // footers read "— may be out of date", so scope to the banner phrase.
     await waitFor(() =>
-      expect(canvas.getByText(/may be out of date/i)).toBeInTheDocument(),
+      expect(canvas.getByText(/balances may be out of date/i)).toBeInTheDocument(),
     );
   },
 };
@@ -60,10 +69,15 @@ export const Stale: Story = {
 function RefreshedMidSession() {
   const push = useToastStore((s) => s.push);
   useEffect(() => {
-    push(
-      "success",
-      "Your New York balance is now 14 days.",
+    // The preview decorator clears the toast store in a mount effect (passive
+    // effects flush parent-after-child, so a synchronous push here would be
+    // wiped). Defer to a macrotask, which runs after that flush, so the
+    // reconciliation toast survives.
+    const timer = setTimeout(
+      () => push("success", "Your New York balance is now 14 days."),
+      0,
     );
+    return () => clearTimeout(timer);
   }, [push]);
   return <BalanceSummaryPanel employeeId={EMP} />;
 }
@@ -80,6 +94,12 @@ export const BalanceRefreshedMidSession: Story = {
     },
   },
   render: () => <RefreshedMidSession />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await waitFor(() =>
+      expect(canvas.getByText(/New York balance is now/i)).toBeInTheDocument(),
+    );
+  },
 };
 
 export const BatchFetchError: Story = {
@@ -124,4 +144,11 @@ export const PartialLoadError: Story = {
       />
     </div>
   ),
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    // The failed cell errors in isolation while the healthy cells still render.
+    expect(canvas.getByText(/load this location/i)).toBeInTheDocument();
+    expect(canvas.getByText("New York")).toBeInTheDocument();
+    expect(canvas.getByText("San Francisco")).toBeInTheDocument();
+  },
 };
