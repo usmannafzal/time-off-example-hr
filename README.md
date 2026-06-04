@@ -29,25 +29,40 @@ against a fresh balance, and a complete mock HCM).
 
 ## Getting started
 
+Requires **Node.js 20+** and **npm**.
+
 ```bash
-npm install
+npm install          # install dependencies
 npm run dev          # http://localhost:3000 — app + mock HCM together
 ```
 
 The mock HCM runs as Next route handlers under `/api/hcm/*`, so a single
 `npm run dev` boots the entire system. No external services are required.
 
+The Playwright integration tests **and** the headless Storybook test-runner
+drive a real Chromium browser, so install it once before running those layers:
+
+```bash
+npx playwright install chromium
+```
+
 ### Useful scripts
 
 ```bash
-npm run dev              # app + mock HCM
-npm run build            # production build
-npm run typecheck        # tsc --noEmit (strict)
-npm run lint             # eslint (flat config)
-npm run test             # Vitest component/unit suite
-npm run test:e2e         # Playwright integration suite (boots dev server)
-npm run storybook        # Storybook dev server on :6006
-npm run build-storybook  # static Storybook build
+npm run dev                # app + mock HCM on :3000
+npm run build              # production build
+npm run typecheck          # tsc --noEmit (strict)
+npm run lint               # eslint (flat config)
+
+npm run test               # Vitest component/unit suite
+npm run test:watch         # Vitest in watch mode
+npm run test:coverage      # Vitest + V8 coverage report (./coverage)
+npm run test:e2e           # Playwright integration suite (boots dev server)
+
+npm run storybook          # Storybook dev server on :6006
+npm run build-storybook    # static Storybook build
+npm run test-storybook     # run play()/interaction tests against a running Storybook
+npm run test-storybook:ci  # build + serve + run interaction tests headlessly, then tear down
 ```
 
 Tunable behavior lives in `.env` (see `.env.example`): poll cadence, staleness
@@ -112,14 +127,50 @@ tests/                    components/ (Vitest), integration/ (Playwright)
 
 ## Testing (three layers)
 
-1. **Interaction tests** — Storybook `play` functions on the 31 stories drive
+Each layer guards a different class of regression. To run everything:
+
+```bash
+npm run typecheck          # types
+npm run lint               # lint
+npm run test:coverage      # 1. component/unit (with coverage)
+npm run test-storybook:ci  # 2. Storybook interaction tests (headless)
+npm run test:e2e           # 3. Playwright integration (boots the app)
+```
+
+1. **Component/unit tests** — Vitest + Testing Library (`tests/components/`):
+   the full state machine, the optimistic→verify→confirm /
+   silent-failure-rollback / 409-conflict flows, the in-flight form not
+   resetting on a background refresh, and manager decision-time balance gating.
+
+   ```bash
+   npm run test            # run once
+   npm run test:watch      # watch mode
+   npm run test:coverage   # text + HTML + lcov report in ./coverage (open coverage/index.html)
+   ```
+
+2. **Interaction tests** — Storybook `play` functions on the 31 stories drive
    real user flows against per-story MSW handlers.
-2. **Component/unit tests** — Vitest + Testing Library: the full state machine,
-   the optimistic→verify→confirm / silent-failure-rollback / 409-conflict flows,
-   the in-flight form not resetting on a background refresh, and manager
-   decision-time balance gating.
+
+   ```bash
+   # Option A — one command (builds, serves, tests, tears down):
+   npm run test-storybook:ci
+
+   # Option B — against a running Storybook (faster while iterating):
+   npm run storybook         # terminal 1
+   npm run test-storybook    # terminal 2
+   ```
+
 3. **Integration tests** — Playwright drives the running app + mock HCM end to
-   end (submit → confirmed pending; manager review → approve).
+   end (submit → confirmed pending; manager review → approve; silent-failure
+   rollback; stale-balance conflict; anniversary reconciliation; temp→real id
+   swap). Playwright boots `npm run dev` automatically.
+
+   ```bash
+   npm run test:e2e
+   ```
+
+All three layers, plus typecheck and lint, run on every push/PR via GitHub
+Actions (`.github/workflows/ci.yml`).
 
 ## TRD §12 success-criteria mapping
 
@@ -136,6 +187,6 @@ tests/                    components/ (Vitest), integration/ (Playwright)
 | Manager fresh balance + conflict handling | `manager-request-card.tsx`, `use-request-actions` |
 | State-machine-driven conditional actions | `getAvailableActions` → `RequestCard` |
 | 31 stories for every meaningful state | `stories/` |
-| Three test layers green | Storybook build, `npm run test`, `npm run test:e2e` |
+| Three test layers green | `npm run test-storybook:ci`, `npm run test:coverage`, `npm run test:e2e` |
+| Proof of coverage | `npm run test:coverage` → `./coverage` (lcov + HTML) |
 | Strict TypeScript, no lint errors | `npm run typecheck`, `npm run lint` |
-```
