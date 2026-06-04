@@ -169,9 +169,9 @@ export function NewRequestForm({
         }}
       />
 
-      <BalanceSnapshot snapshot={snapshot} days={days} />
+      {!pending && <BalanceSnapshot snapshot={snapshot} days={days} />}
 
-      {snapshot && live && (
+      {snapshot && live && editing && !pending && (
         <StaleBalanceWarning
           snapshotAvailable={snapshot.available}
           liveAvailable={live.available}

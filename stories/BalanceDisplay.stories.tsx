@@ -62,7 +62,7 @@ function RefreshedMidSession() {
   useEffect(() => {
     push(
       "success",
-      "Your New York balance has been updated by HR (12 → 14 days).",
+      "Your New York balance is now 14 days.",
     );
   }, [push]);
   return <BalanceSummaryPanel employeeId={EMP} />;

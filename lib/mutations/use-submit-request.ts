@@ -80,7 +80,16 @@ export async function verifyEntry(
   );
 
   if (fresh.available === entry.expectedAvailable) {
-    // Confirmed: the write persisted. Drop the overlay; server is source of truth.
+    // Confirmed: the write persisted. Seed the batch cache with the fresh value
+    // BEFORE clearing the optimistic delta so the displayed balance never
+    // momentarily reverts to the pre-reservation number (a stale batch + no
+    // delta would otherwise read as a phantom "increase" and trigger a
+    // misleading reconciliation toast). Server remains the source of truth.
+    queryClient.setQueryData<Balance[]>(
+      queryKeys.balances(entry.employeeId),
+      (prev) =>
+        prev?.map((b) => (b.locationId === entry.locationId ? fresh : b)),
+    );
     store.removeEntry(realId);
     store.clearDelta(entry.employeeId, entry.locationId);
     queryClient.invalidateQueries({ queryKey: queryKeys.balances(entry.employeeId) });
